@@ -668,13 +668,13 @@ print_stats(rd_kafka_t *rk, int mode, int otype, const char *compression) {
                                     latency_avg / 1000.0f,
                                     cnt.latency_lo / 1000.0f,
                                     cnt.latency_hi / 1000.0f);
-                        printf("%% %" PRIu64 " messages (%" PRIu64
-                               " bytes) "
+                        printf("%% %" PRIu64 " messages (%.02f"
+                               " MB) "
                                "consumed in %" PRIu64 "ms: %" PRIu64
                                " msgs/s "
                                "(%.02f MB/s)"
                                "%s\n",
-                               cnt.msgs, cnt.bytes, t_total / 1000,
+                               cnt.msgs, cnt.bytes/1024.0/1024.0, t_total / 1000,
                                ((cnt.msgs * 1000000) / t_total),
                                (float)((cnt.bytes) / (float)t_total), extra);
                 }
@@ -847,7 +847,7 @@ int main(int argc, char **argv) {
         rd_kafka_queue_t *rkqu  = NULL;
         const char *compression = "no";
         int64_t start_offset    = 0;
-        int batch_size          = 0;
+        int batch_size          = 10000;
         int idle                = 0;
         const char *stats_cmd   = NULL;
         char *stats_intvlstr    = NULL;

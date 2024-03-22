@@ -37,6 +37,8 @@
 #include <signal.h>
 #include <string.h>
 #include <ctype.h>
+#include <sys/time.h>
+#include <malloc.h>
 
 
 /* Typical include path would be <librdkafka/rdkafka.h>, but this program
@@ -127,12 +129,30 @@ int main(int argc, char **argv) {
                 return 1;
         }
 
+        /**
+         * enable auto commit
+         */
+        if (rd_kafka_conf_set(conf, "auto.offset.reset", "earliest", errstr,
+                              sizeof(errstr)) != RD_KAFKA_CONF_OK) {
+                fprintf(stderr, "%s\n", errstr);
+                rd_kafka_conf_destroy(conf);
+                return 1;
+        }
+
         /* If there is no previously committed offset for a partition
          * the auto.offset.reset strategy will be used to decide where
          * in the partition to start fetching messages.
          * By setting this to earliest the consumer will read all messages
          * in the partition if there was no previously committed offset. */
-        if (rd_kafka_conf_set(conf, "auto.offset.reset", "earliest", errstr,
+        if (rd_kafka_conf_set(conf, "enable.auto.commit", "false", errstr,
+                              sizeof(errstr)) != RD_KAFKA_CONF_OK) {
+                fprintf(stderr, "%s\n", errstr);
+                rd_kafka_conf_destroy(conf);
+                return 1;
+        }
+
+
+        if (rd_kafka_conf_set(conf, "max.poll.records", "1000000", errstr,
                               sizeof(errstr)) != RD_KAFKA_CONF_OK) {
                 fprintf(stderr, "%s\n", errstr);
                 rd_kafka_conf_destroy(conf);
@@ -202,16 +222,18 @@ int main(int argc, char **argv) {
          * for the application to handle this idle period in a special way
          * since a rebalance may happen at any time.
          * Start polling for messages. */
+        struct timeval start, end;
+        gettimeofday(&start, NULL);
+        rd_kafka_message_t **rkmessages = NULL;
+        rkmessages = malloc(sizeof(*rkmessages) * 1000);
 
         while (run) {
-                rd_kafka_message_t *rkm;
+                ssize_t r;
 
-                rkm = rd_kafka_consumer_poll(rk, 100);
-                if (!rkm)
-                        continue; /* Timeout: no message within 100ms,
-                                   *  try again. This short timeout allows
-                                   *  checking for `run` at frequent intervals.
-                                   */
+                r = rd_kafka_consume_batch(rk, 0, 100, rkmessages, 10000);
+                if (r != -1) {
+
+                }
 
                 /* consumer_poll() will return either a proper message
                  * or a consumer error (rkm->err is set). */
@@ -225,28 +247,48 @@ int main(int argc, char **argv) {
                         continue;
                 }
 
+                int gap = 1000000;
+
                 /* Proper message. */
-                printf("Message on %s [%" PRId32 "] at offset %" PRId64
-                       " (leader epoch %" PRId32 "):\n",
-                       rd_kafka_topic_name(rkm->rkt), rkm->partition,
-                       rkm->offset, rd_kafka_message_leader_epoch(rkm));
+                if (rkm->offset % gap == 0) {
+                        printf("Message on %s [%" PRId32 "] at offset %" PRId64
+                               " (leader epoch %" PRId32 "):\n",
+                               rd_kafka_topic_name(rkm->rkt), rkm->partition,
+                               rkm->offset, rd_kafka_message_leader_epoch(rkm));
+                        gettimeofday(&end, NULL);
+                        long seconds = (end.tv_sec - start.tv_sec);
+                        long micros = ((seconds * 1000000) + end.tv_usec) - (start.tv_usec);
+                        /* Print the message value/payload. */
+                        if (rkm->payload && is_printable(rkm->payload, rkm->len))
+                                printf(" Value: %.*s\n", (int)rkm->len,
+                                       (const char *)rkm->payload);
+                        else if (rkm->payload)
+                                printf(" Value: (%d bytes)\n", (int)rkm->len);
 
-                /* Print the message key. */
-                if (rkm->key && is_printable(rkm->key, rkm->key_len))
-                        printf(" Key: %.*s\n", (int)rkm->key_len,
-                               (const char *)rkm->key);
-                else if (rkm->key)
-                        printf(" Key: (%d bytes)\n", (int)rkm->key_len);
+                        printf("%d 条处理时间： %ld 秒 %ld 微秒\n", gap, seconds, micros);
+                }
 
-                /* Print the message value/payload. */
-                if (rkm->payload && is_printable(rkm->payload, rkm->len))
-                        printf(" Value: %.*s\n", (int)rkm->len,
-                               (const char *)rkm->payload);
-                else if (rkm->payload)
-                        printf(" Value: (%d bytes)\n", (int)rkm->len);
+                if (rkm->offset == 100000000) break;
+//                /* Print the message key. */
+//                if (rkm->key && is_printable(rkm->key, rkm->key_len))
+//                        printf(" Key: %.*s\n", (int)rkm->key_len,
+//                               (const char *)rkm->key);
+//                else if (rkm->key)
+//                        printf(" Key: (%d bytes)\n", (int)rkm->key_len);
+//
+//                /* Print the message value/payload. */
+//                if (rkm->payload && is_printable(rkm->payload, rkm->len))
+//                        printf(" Value: %.*s\n", (int)rkm->len,
+//                               (const char *)rkm->payload);
+//                else if (rkm->payload)
+//                        printf(" Value: (%d bytes)\n", (int)rkm->len);
 
                 rd_kafka_message_destroy(rkm);
         }
+        gettimeofday(&end, NULL);
+        long seconds = (end.tv_sec - start.tv_sec);
+        long micros = ((seconds * 1000000) + end.tv_usec) - (start.tv_usec);
+        printf("处理时间： %ld 秒 %ld 微秒\n", seconds, micros);
 
 
         /* Close the consumer: commit final offsets and leave the group. */
